@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: livevideobot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python Livevideobot_saas.py
