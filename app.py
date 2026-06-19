@@ -1,71 +1,95 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, redirect, session
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 import os
 
 app = Flask(__name__)
+app.secret_key = "secret123"
 
-# ENV VARIABLES
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-SESSION = os.environ.get("SESSION")
-TARGET = os.environ.get("TARGET")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION_STRING = os.getenv("SESSION_STRING")
+
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+client.connect()
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# TELEGRAM CLIENT (FIXED - NO ASYNC)
-client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
-client.connect()
-
+# ---------------- UI ----------------
 UI = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>LiveVideoBot</title>
-<style>
-body { background:#0f172a; color:white; text-align:center; font-family:Arial; }
-.box { margin-top:100px; }
-input, button { padding:10px; margin:10px; }
-</style>
+<title>LiveVideo SaaS</title>
 </head>
-<body>
+<body style="background:#0f172a;color:white;text-align:center;font-family:Arial">
 
-<div class="box">
-<h1>🚀 LiveVideoBot Upload</h1>
+<h2>🚀 LiveVideo SaaS Dashboard</h2>
 
-<form method="post" enctype="multipart/form-data">
-<input type="file" name="file" required><br>
-<button type="submit">Upload & Send</button>
+{% if not user %}
+<form method="post" action="/login">
+<input name="username" placeholder="Username"><br><br>
+<button>Login</button>
+</form>
+{% else %}
+
+<p>Welcome {{user}}</p>
+
+<form method="post" action="/send" enctype="multipart/form-data">
+<input name="target" placeholder="@telegramusername" required><br><br>
+<input type="file" name="file" required><br><br>
+<button>Upload & Send</button>
 </form>
 
+<a href="/logout">Logout</a>
+
+{% endif %}
+
 <p>{{msg}}</p>
-</div>
 
 </body>
 </html>
 """
 
-@app.route("/", methods=["GET", "POST"])
+# ---------------- HOME ----------------
+@app.route("/", methods=["GET"])
 def home():
-    msg = ""
+    return render_template_string(UI, user=session.get("user"))
 
-    if request.method == "POST":
-        file = request.files["file"]
+# ---------------- LOGIN ----------------
+@app.route("/login", methods=["POST"])
+def login():
+    session["user"] = request.form.get("username")
+    return redirect("/")
 
-        if file:
-            path = os.path.join(UPLOAD_FOLDER, file.filename)
-            file.save(path)
+# ---------------- LOGOUT ----------------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
 
-            try:
-                client.send_file(TARGET, path)
-                msg = "✅ Sent to Telegram successfully"
-            except Exception as e:
-                msg = f"❌ Error: {str(e)}"
+# ---------------- SEND FILE ----------------
+@app.route("/send", methods=["POST"])
+def send():
+    if "user" not in session:
+        return redirect("/")
 
-    return render_template_string(UI, msg=msg)
+    file = request.files["file"]
+    target = request.form.get("target")
 
+    path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(path)
 
+    try:
+        client.send_file(target, path)
+        msg = "Sent successfully ✅"
+    except Exception as e:
+        msg = f"Error: {str(e)}"
+
+    return render_template_string(UI, user=session.get("user"), msg=msg)
+
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
