@@ -5,9 +5,7 @@ from flask import Flask, request, redirect, session, render_template_string
 app = Flask(__name__)
 app.secret_key = "livevideobot_secret"
 
-# =====================
-# DATABASE SETUP
-# =====================
+# ================= DATABASE =================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 c = conn.cursor()
 
@@ -20,14 +18,12 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# =====================
-# UI TEMPLATE (FIXED PROPERLY)
-# =====================
+# ================= UI TEMPLATE =================
 UI = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>LiveVideoBot SaaS</title>
+<title>LiveVideoBot</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -38,8 +34,6 @@ body {font-family: Arial; background:#0f172a; color:white; margin:0;}
 .card {background:#1f2937; padding:20px; border-radius:12px; margin-top:20px;}
 input {width:100%; padding:12px; margin:8px 0; border-radius:8px; border:none;}
 button {width:100%; padding:12px; background:#3b82f6; border:none; color:white; border-radius:8px;}
-button:hover {background:#2563eb;}
-h2 {text-align:center;}
 </style>
 
 </head>
@@ -63,21 +57,17 @@ h2 {text-align:center;}
 </html>
 """
 
-# =====================
-# HOME
-# =====================
+# ================= HOME =================
 @app.route("/")
 def home():
     return render_template_string(UI, content="""
     <div class="card">
-        <h2>Welcome 🚀</h2>
-        <p>LiveVideoBot SaaS System is running.</p>
+        <h2>Welcome</h2>
+        <p>LiveVideoBot is running successfully 🚀</p>
     </div>
     """)
 
-# =====================
-# SIGNUP
-# =====================
+# ================= SIGNUP =================
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
@@ -102,9 +92,7 @@ def signup():
     </div>
     """)
 
-# =====================
-# LOGIN
-# =====================
+# ================= LOGIN =================
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -131,9 +119,7 @@ def login():
     </div>
     """)
 
-# =====================
-# DASHBOARD
-# =====================
+# ================= DASHBOARD =================
 @app.route("/dashboard")
 def dashboard():
     if "user" not in session:
@@ -143,13 +129,11 @@ def dashboard():
     <div class="card">
         <h2>Dashboard</h2>
         <p>Welcome <b>{session['user']}</b> 👋</p>
-        <p>Status: System Working ✅</p>
+        <p>System is stable ✅</p>
     </div>
     """)
 
-# =====================
-# RUN
-# =====================
+# ================= RUN =================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
