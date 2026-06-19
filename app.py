@@ -3,6 +3,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 import os
 import subprocess
+import asyncio
 
 app = Flask(__name__)
 
@@ -75,7 +76,6 @@ def convert_to_square_video(input_path, output_path):
     Uses ffmpeg to crop any video from the center into a 1:1 square 
     and encodes it properly for Telegram Video Notes.
     """
-    # This filter crops the video to a 1:1 aspect ratio based on the shortest side
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-i', input_path,
         '-vf', "crop='ih:ih:(iw-ih)/2:0' if(gt(iw,ih), crop='iw:iw:0:(ih-iw)/2')",
@@ -100,21 +100,16 @@ async def send_to_telegram(filepath, target, media_type):
     if media_type == "video_note":
         processed_path = os.path.join(UPLOAD_FOLDER, "processed_note.mp4")
         try:
-            # Force convert the video to a 1:1 square format
             convert_to_square_video(filepath, processed_path)
-            
-            # Send the converted square video as a live video note
             await client.send_file(
                 target,
                 processed_path,
                 video_note=True
             )
         finally:
-            # Clean up the temporary converted file
             if os.path.exists(processed_path):
                 os.remove(processed_path)
     else:
-        # Standard video/photo layout
         await client.send_file(
             target,
             filepath,
@@ -123,8 +118,9 @@ async def send_to_telegram(filepath, target, media_type):
 
     await client.disconnect()
 
+# Changed back to standard synchronous route definition to prevent crash
 @app.route("/", methods=["GET", "POST"])
-async def home():
+def home():
     msg = ""
 
     if request.method == "POST":
@@ -137,7 +133,12 @@ async def home():
             file.save(filepath)
 
             try:
-                await send_to_telegram(filepath, username, media_type)
+                # Safely run the async function using an isolated event loop setup
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(send_to_telegram(filepath, username, media_type))
+                loop.close()
+                
                 msg = "✅ Sent successfully as requested!"
             except Exception as e:
                 msg = f"❌ Error: {str(e)}"
