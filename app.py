@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, redirect, url_for, flash
+from flask import Flask, request, render_template_string, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin, LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -7,10 +7,10 @@ from telethon.sessions import StringSession
 import os
 import subprocess
 import asyncio
+import threading
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", "super-secret-key-change-this")
-# Use SQLite locally, or PostgreSQL in production on Render
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "sqlite:///users.db")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -28,7 +28,6 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    # Allows each user to save their own Telegram credentials safely
     telegram_api_id = db.Column(db.Integer, nullable=True)
     telegram_api_hash = db.Column(db.String(100), nullable=True)
     telegram_session = db.Column(db.Text, nullable=True)
@@ -38,7 +37,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # ======================
-# TEMPLATES (UI)
+# UI LAYOUTS
 # ======================
 BASE_STYLE = """
 <style>
@@ -99,7 +98,7 @@ DASHBOARD_UI = BASE_STYLE + """
 """
 
 # ======================
-# CORE LOGIC & UTILITIES
+# WORKER UTILITIES
 # ======================
 def convert_to_square_video_low_mem(input_path, output_path):
     ffmpeg_cmd = [
@@ -112,11 +111,12 @@ def convert_to_square_video_low_mem(input_path, output_path):
     if process.returncode != 0:
         raise Exception("FFmpeg processing failure.")
 
-async def send_to_telegram(filepath, target, media_type, api_id, api_hash, session_str):
+async def send_to_telegram_async(filepath, target, media_type, api_id, api_hash, session_str):
     client = TelegramClient(StringSession(session_str), api_id, api_hash)
     await client.connect()
+    
     if media_type == "video_note":
-        processed_path = os.path.join(UPLOAD_FOLDER, f"proc_{os.getpid()}.mp4")
+        processed_path = os.path.join(UPLOAD_FOLDER, f"proc_{os.getpid()}_{threading.get_ident()}.mp4")
         try:
             convert_to_square_video_low_mem(filepath, processed_path)
             await client.send_file(target, processed_path, video_note=True)
@@ -125,7 +125,23 @@ async def send_to_telegram(filepath, target, media_type, api_id, api_hash, sessi
                 os.remove(processed_path)
     else:
         await client.send_file(target, filepath, supports_streaming=True)
+        
     await client.disconnect()
+
+def run_telegram_thread(filepath, target, media_type, api_id, api_hash, session_str):
+    """Worker function that executes isolated async loops inside a separate thread."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(
+            send_to_telegram_async(filepath, target, media_type, api_id, api_hash, session_str)
+        )
+        loop.close()
+    except Exception as e:
+        print(f"Background worker execution error: {e}")
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
 # ======================
 # ROUTES
@@ -143,7 +159,7 @@ def signup():
         new_user = User(
             username=username, 
             password_hash=hashed_pwd,
-            telegram_api_id=int(os.getenv("API_ID", 0)),       # Defaulting to global fallback env variables
+            telegram_api_id=int(os.getenv("API_ID", 0)),
             telegram_api_hash=os.getenv("API_HASH", ""),
             telegram_session=os.getenv("SESSION_STRING", "")
         )
@@ -181,30 +197,27 @@ def dashboard():
         media_type = request.form.get("media_type", "video_note")
 
         if file and target:
-            filepath = os.path.join(UPLOAD_FOLDER, f"{os.getpid()}_{file.filename}")
+            # Create unique file token name
+            unique_filename = f"job_{os.getpid()}_{file.filename}"
+            filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
             file.save(filepath)
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(
-                    send_to_telegram(
-                        filepath, target, media_type,
-                        current_user.telegram_api_id,
-                        current_user.telegram_api_hash,
-                        current_user.telegram_session
-                    )
+
+            # Fire off processing inside an isolated background thread
+            thread = threading.Thread(
+                target=run_telegram_thread,
+                args=(
+                    filepath, target, media_type,
+                    current_user.telegram_api_id,
+                    current_user.telegram_api_hash,
+                    current_user.telegram_session
                 )
-                loop.close()
-                msg = "✅ Media successfully processed and transmitted!"
-            except Exception as e:
-                msg = f"❌ Error context: {str(e)}"
-            finally:
-                if os.path.exists(filepath):
-                    os.remove(filepath)
+            )
+            thread.start()
+            
+            msg = "✅ Processing started! The media will appear in Telegram shortly."
 
     return render_template_string(DASHBOARD_UI, current_user=current_user, msg=msg)
 
-# Initialize database contexts safely
 with app.app_context():
     db.create_all()
 
