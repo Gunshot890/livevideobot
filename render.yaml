@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: livevideobot
+    name: livevideosaas
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn Livevideobot_saas:app
+    startCommand: gunicorn app:app
