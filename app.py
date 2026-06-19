@@ -38,10 +38,17 @@ def send_file_to_telegram(target, path):
 
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
-    async def runner():
-        await client.connect()
-        await client.send_file(target, path)
-        await client.disconnect()
+  async def send_to_telegram(filepath):
+    client = TelegramClient("session", API_ID, API_HASH)
+    await client.start(phone=PHONE)
+
+    await client.send_file(
+        TARGET,
+        filepath,
+        supports_streaming=True
+    )
+
+    await client.disconnect()
 
     loop.run_until_complete(runner())
     loop.close()
