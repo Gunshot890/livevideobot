@@ -5,9 +5,7 @@ import os
 
 app = Flask(__name__)
 
-# =====================
-# RENDER ENV VARIABLES
-# =====================
+# ENV VARIABLES
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION = os.environ.get("SESSION")
@@ -16,15 +14,10 @@ TARGET = os.environ.get("TARGET")
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# =====================
-# TELEGRAM CLIENT
-# =====================
+# TELEGRAM CLIENT (FIXED - NO ASYNC)
 client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
 client.connect()
 
-# =====================
-# UI
-# =====================
 UI = """
 <!DOCTYPE html>
 <html>
