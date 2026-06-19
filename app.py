@@ -71,17 +71,22 @@ UI = """
 </html>
 """
 
-def convert_to_square_video(input_path, output_path):
+def convert_to_square_video_low_mem(input_path, output_path):
     """
-    Uses ffmpeg to crop any video from its center into a clean 1:1 square
-    and encodes it properly for Telegram Video Notes.
+    Optimized FFmpeg processing specifically tuned to run 
+    safely under Render's 512MB RAM ceiling.
     """
-    # Using 'min(iw,ih)' handles both vertical and horizontal videos dynamically
     ffmpeg_cmd = [
-        'ffmpeg', '-y', '-i', input_path,
-        '-vf', "crop='min(iw,ih):min(iw,ih)'",
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '25',
-        '-c:a', 'aac', '-b:a', '128k',
+        'ffmpeg', '-y',
+        '-threads', '1',                    # Prevent RAM spikes from multi-threading
+        '-i', input_path,
+        '-vf', "crop='min(iw,ih):min(iw,ih)'", # Center square crop
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',             # Reduces CPU and memory footprint significantly
+        '-pix_fmt', 'yuv420p',
+        '-r', '24',                         # Limit frame rate slightly to save resources
+        '-c:a', 'aac',
+        '-b:a', '64k',                      # Reduced audio bitrate for low overhead
         output_path
     ]
     
@@ -99,9 +104,9 @@ async def send_to_telegram(filepath, target, media_type):
     await client.connect()
 
     if media_type == "video_note":
-        processed_path = os.path.join(UPLOAD_FOLDER, "processed_note.mp4")
+        processed_path = os.path.join(UPLOAD_FOLDER, "processed_low_mem.mp4")
         try:
-            convert_to_square_video(filepath, processed_path)
+            convert_to_square_video_low_mem(filepath, processed_path)
             await client.send_file(
                 target,
                 processed_path,
