@@ -3,4 +3,4 @@ services:
     name: livevideobot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn Wsgi:app
+    startCommand: gunicorn wsgi:app
