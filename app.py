@@ -8,6 +8,7 @@ import os
 import subprocess
 import asyncio
 import threading
+import requests
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", "super-secret-key-change-this")
@@ -20,6 +21,10 @@ login_manager.login_view = 'login'
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Bot configurations from environment variables
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
 
 # ======================
 # DATABASE MODELS
@@ -98,6 +103,39 @@ DASHBOARD_UI = BASE_STYLE + """
 """
 
 # ======================
+# NOTIFICATION HELPER
+# ======================
+def send_bot_notification(username, ip_address):
+    """Sends a structural alert to your admin Telegram chat via the HTTP Bot API."""
+    if not BOT_TOKEN or not ADMIN_CHAT_ID:
+        return
+        
+    # Query database total to provide an accurate running member count
+    try:
+        total_users = User.query.count()
+    except:
+        total_users = "Unknown"
+
+    text = (
+        f"🔔 *New User Registration*\n\n"
+        f"👤 *Username:* `{username}`\n"
+        f"🌐 *IP Address:* `{ip_address}`\n"
+        f"📊 *Total Members Now:* {total_users}"
+    )
+    
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": ADMIN_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Notification error: {e}")
+
+# ======================
 # WORKER UTILITIES
 # ======================
 def convert_to_square_video_low_mem(input_path, output_path):
@@ -129,7 +167,6 @@ async def send_to_telegram_async(filepath, target, media_type, api_id, api_hash,
     await client.disconnect()
 
 def run_telegram_thread(filepath, target, media_type, api_id, api_hash, session_str):
-    """Worker function that executes isolated async loops inside a separate thread."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -165,6 +202,17 @@ def signup():
         )
         db.session.add(new_user)
         db.session.commit()
+        
+        # Capture the visitor's network IP address
+        # 'X-Forwarded-For' ensures accuracy behind Render's reverse proxy system
+        if request.headers.getlist("X-Forwarded-For"):
+            ip_address = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+        else:
+            ip_address = request.remote_addr
+
+        # Dispatch the notification in a non-blocking background task
+        threading.Thread(target=send_bot_notification, args=(username, ip_address)).start()
+
         return redirect(url_for('login'))
     return render_template_string(SIGNUP_UI)
 
@@ -197,12 +245,10 @@ def dashboard():
         media_type = request.form.get("media_type", "video_note")
 
         if file and target:
-            # Create unique file token name
             unique_filename = f"job_{os.getpid()}_{file.filename}"
             filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
             file.save(filepath)
 
-            # Fire off processing inside an isolated background thread
             thread = threading.Thread(
                 target=run_telegram_thread,
                 args=(
