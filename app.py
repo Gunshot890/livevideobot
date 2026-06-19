@@ -104,7 +104,7 @@ async def send_to_telegram(filepath, target, media_type):
     await client.connect()
 
     if media_type == "video_note":
-        processed_path = os.path.join(UPLOAD_FOLDER, "processed_low_mem.mp4")
+        processed_path = os.path.join(UPLOAD_FOLDER, f"processed_{os.getpid()}.mp4")
         try:
             convert_to_square_video_low_mem(filepath, processed_path)
             await client.send_file(
@@ -114,7 +114,10 @@ async def send_to_telegram(filepath, target, media_type):
             )
         finally:
             if os.path.exists(processed_path):
-                os.remove(processed_path)
+                try:
+                    os.remove(processed_path)
+                except:
+                    pass
     else:
         await client.send_file(
             target,
@@ -134,7 +137,9 @@ def home():
         media_type = request.form.get("media_type", "video_note")
 
         if file and username:
-            filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+            # Create a unique filename based on process ID to avoid overlapping conflicts
+            unique_filename = f"{os.getpid()}_{file.filename}"
+            filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
             file.save(filepath)
 
             try:
@@ -148,7 +153,10 @@ def home():
                 msg = f"❌ Error: {str(e)}"
             finally:
                 if os.path.exists(filepath):
-                    os.remove(filepath)
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
 
     return render_template_string(UI, msg=msg)
 
