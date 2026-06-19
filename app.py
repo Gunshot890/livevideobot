@@ -73,12 +73,13 @@ UI = """
 
 def convert_to_square_video(input_path, output_path):
     """
-    Uses ffmpeg to crop any video from the center into a 1:1 square 
+    Uses ffmpeg to crop any video from its center into a clean 1:1 square
     and encodes it properly for Telegram Video Notes.
     """
+    # Using 'min(iw,ih)' handles both vertical and horizontal videos dynamically
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-i', input_path,
-        '-vf', "crop='ih:ih:(iw-ih)/2:0' if(gt(iw,ih), crop='iw:iw:0:(ih-iw)/2')",
+        '-vf', "crop='min(iw,ih):min(iw,ih)'",
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '25',
         '-c:a', 'aac', '-b:a', '128k',
         output_path
@@ -118,7 +119,6 @@ async def send_to_telegram(filepath, target, media_type):
 
     await client.disconnect()
 
-# Changed back to standard synchronous route definition to prevent crash
 @app.route("/", methods=["GET", "POST"])
 def home():
     msg = ""
@@ -133,7 +133,6 @@ def home():
             file.save(filepath)
 
             try:
-                # Safely run the async function using an isolated event loop setup
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(send_to_telegram(filepath, username, media_type))
