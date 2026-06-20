@@ -493,31 +493,40 @@ def verify_code():
 with app.app_context():
     db.create_all()
     
-    # This automatically adds the missing tracking columns if the database already exists
+    # This checks for and creates columns cleanly whether SQLite or PostgreSQL is running
     from sqlalchemy import text
     try:
         with db.engine.connect() as conn:
-            # Check if video_count exists, if not, add it
+            # Add video_count
             try:
                 conn.execute(text("SELECT video_count FROM \"user\" LIMIT 1"))
             except Exception:
                 conn.rollback()
                 print("⚠️ Patching database: Adding missing video_count column...")
-                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN video_count INTEGER DEFAULT 0 NOT NULL"))
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN video_count INTEGER DEFAULT 0 NOT NULL;"))
                 conn.commit()
 
-            # Check if voice_count exists, if not, add it
+            # Add voice_count
             try:
                 conn.execute(text("SELECT voice_count FROM \"user\" LIMIT 1"))
             except Exception:
                 conn.rollback()
                 print("⚠️ Patching database: Adding missing voice_count column...")
-                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN voice_count INTEGER DEFAULT 0 NOT NULL"))
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN voice_count INTEGER DEFAULT 0 NOT NULL;"))
+                conn.commit()
+
+            # Add is_premium
+            try:
+                conn.execute(text("SELECT is_premium FROM \"user\" LIMIT 1"))
+            except Exception:
+                conn.rollback()
+                print("⚠️ Patching database: Adding missing is_premium column...")
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN is_premium BOOLEAN DEFAULT FALSE NOT NULL;"))
                 conn.commit()
     except Exception as e:
-        print(f"Database patching notice: {e}")
+        print(f"Database column injection note: {e}")
 
-    # Check if admin exists; if not, create it explicitly
+    # Check if admin user exists; if not, create it explicitly
     try:
         admin_user = User.query.filter_by(username='admin').first()
         if not admin_user:
