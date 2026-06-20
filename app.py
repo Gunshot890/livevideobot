@@ -487,11 +487,49 @@ def verify_code():
         session.update({'dash_msg': f"❌ Access Denied: {str(e)}", 'session_step': 'phone'})
     return redirect(url_for('dashboard'))
 
+# ==========================================
+# SAFE DATABASE AUTO-PATCHER & ADMIN BUILDER
+# ==========================================
 with app.app_context():
     db.create_all()
-    if not User.query.filter_by(username='admin').first():
-        db.session.add(User(username='admin', password_hash=generate_password_hash('AdminPass2026!', method='scrypt'), is_premium=True))
-        db.session.commit()
+    
+    # This automatically adds the missing tracking columns if the database already exists
+    from sqlalchemy import text
+    try:
+        with db.engine.connect() as conn:
+            # Check if video_count exists, if not, add it
+            try:
+                conn.execute(text("SELECT video_count FROM \"user\" LIMIT 1"))
+            except Exception:
+                conn.rollback()
+                print("⚠️ Patching database: Adding missing video_count column...")
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN video_count INTEGER DEFAULT 0 NOT NULL"))
+                conn.commit()
+
+            # Check if voice_count exists, if not, add it
+            try:
+                conn.execute(text("SELECT voice_count FROM \"user\" LIMIT 1"))
+            except Exception:
+                conn.rollback()
+                print("⚠️ Patching database: Adding missing voice_count column...")
+                conn.execute(text("ALTER TABLE \"user\" ADD COLUMN voice_count INTEGER DEFAULT 0 NOT NULL"))
+                conn.commit()
+    except Exception as e:
+        print(f"Database patching notice: {e}")
+
+    # Check if admin exists; if not, create it explicitly
+    try:
+        admin_user = User.query.filter_by(username='admin').first()
+        if not admin_user:
+            print("🚀 Admin account missing! Force creating admin account now...")
+            hashed_pwd = generate_password_hash('AdminPass2026!', method='scrypt')
+            db.session.execute(
+                text("INSERT INTO \"user\" (username, password_hash, video_count, voice_count, is_premium) VALUES (:u, :p, 0, 0, true)"),
+                {"u": "admin", "p": hashed_pwd}
+            )
+            db.session.commit()
+    except Exception as e:
+        print(f"Admin initialization notice: {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
